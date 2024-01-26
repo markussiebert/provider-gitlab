@@ -35,6 +35,10 @@ type MockClient struct {
 	MockShareGroupWithGroup   func(gid interface{}, opt *gitlab.ShareGroupWithGroupOptions, options ...gitlab.RequestOptionFunc) (*gitlab.Group, *gitlab.Response, error)
 	MockUnshareGroupFromGroup func(gid interface{}, groupID int, options ...gitlab.RequestOptionFunc) (*gitlab.Response, error)
 
+	MockGetGroupAccessToken    func(pid interface{}, id int, options ...gitlab.RequestOptionFunc) (*gitlab.GroupAccessToken, *gitlab.Response, error)
+	MockCreateGroupAccessToken func(pid interface{}, opt *gitlab.CreateGroupAccessTokenOptions, options ...gitlab.RequestOptionFunc) (*gitlab.GroupAccessToken, *gitlab.Response, error)
+	MockRevokeGroupAccessToken func(pid interface{}, id int, options ...gitlab.RequestOptionFunc) (*gitlab.Response, error)
+
 	MockGetMember    func(gid interface{}, user int, options ...gitlab.RequestOptionFunc) (*gitlab.GroupMember, *gitlab.Response, error)
 	MockAddMember    func(gid interface{}, opt *gitlab.AddGroupMemberOptions, options ...gitlab.RequestOptionFunc) (*gitlab.GroupMember, *gitlab.Response, error)
 	MockEditMember   func(gid interface{}, user int, opt *gitlab.EditGroupMemberOptions, options ...gitlab.RequestOptionFunc) (*gitlab.GroupMember, *gitlab.Response, error)
@@ -146,4 +150,19 @@ func (c *MockClient) RemoveVariable(gid interface{}, key string, options ...gitl
 // ListUsers calls the underlying MockListUsers method.
 func (c *MockClient) ListUsers(opt *gitlab.ListUsersOptions, options ...gitlab.RequestOptionFunc) ([]*gitlab.User, *gitlab.Response, error) {
 	return c.MockListUsers(opt)
+}
+
+// GetGroupAccessToken calls the underlying MockGetGroupAccessToken method.
+func (c *MockClient) GetGroupAccessToken(pid interface{}, id int, options ...gitlab.RequestOptionFunc) (*gitlab.GroupAccessToken, *gitlab.Response, error) {
+	return c.MockGetGroupAccessToken(pid, id)
+}
+
+// CreateGroupAccessToken calls the underlying MockCreateGroupAccessToken method.
+func (c *MockClient) CreateGroupAccessToken(pid interface{}, opt *gitlab.CreateGroupAccessTokenOptions, options ...gitlab.RequestOptionFunc) (*gitlab.GroupAccessToken, *gitlab.Response, error) {
+	return c.MockCreateGroupAccessToken(pid, opt)
+}
+
+// RevokeGroupAccessToken calls the underlying MockRevokeGroupAccessToken method.
+func (c *MockClient) RevokeGroupAccessToken(pid interface{}, id int, options ...gitlab.RequestOptionFunc) (*gitlab.Response, error) {
+	return c.MockRevokeGroupAccessToken(pid, id)
 }
