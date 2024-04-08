@@ -23,6 +23,7 @@ import (
 
 	"github.com/xanzy/go-gitlab"
 
+	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,15 +31,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	"github.com/crossplane/crossplane-runtime/pkg/connection"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
 	"github.com/crossplane-contrib/provider-gitlab/apis/groups/v1alpha1"
+	secretstoreapi "github.com/crossplane-contrib/provider-gitlab/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-gitlab/pkg/clients"
 	"github.com/crossplane-contrib/provider-gitlab/pkg/clients/groups"
+	"github.com/crossplane-contrib/provider-gitlab/pkg/features"
 )
 
 const (
@@ -53,18 +56,35 @@ const (
 )
 
 // SetupAccessToken adds a controller that reconciles GroupAccessTokens.
-func SetupAccessToken(mgr ctrl.Manager, l logging.Logger) error {
-	name := managed.ControllerName(v1alpha1.AccessTokenKind)
+func SetupAccessToken(mgr ctrl.Manager, o controller.Options) error {
+	name := managed.ControllerName(v1alpha1.DeployTokenKind)
+
+	cps := []managed.ConnectionPublisher{managed.NewAPISecretPublisher(mgr.GetClient(), mgr.GetScheme())}
+	if o.Features.Enabled(features.EnableAlphaExternalSecretStores) {
+		cps = append(cps, connection.NewDetailsManager(mgr.GetClient(), secretstoreapi.StoreConfigGroupVersionKind))
+	}
+
+	reconcilerOpts := []managed.ReconcilerOption{
+		managed.WithExternalConnecter(&connector{kube: mgr.GetClient(), newGitlabClientFn: groups.NewAccessTokenClient}),
+		managed.WithInitializers(),
+		managed.WithPollInterval(o.PollInterval),
+		managed.WithLogger(o.Logger.WithValues("controller", name)),
+		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
+		managed.WithConnectionPublishers(cps...),
+	}
+
+	if o.Features.Enabled(features.EnableAlphaManagementPolicies) {
+		reconcilerOpts = append(reconcilerOpts, managed.WithManagementPolicies())
+	}
+
+	r := managed.NewReconciler(mgr,
+		resource.ManagedKind(v1alpha1.AccessTokenGroupVersionKind),
+		reconcilerOpts...)
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
 		For(&v1alpha1.AccessToken{}).
-		Complete(managed.NewReconciler(mgr,
-			resource.ManagedKind(v1alpha1.AccessTokenGroupVersionKind),
-			managed.WithExternalConnecter(&connector{kube: mgr.GetClient(), newGitlabClientFn: groups.NewAccessTokenClient}),
-			managed.WithInitializers(managed.NewDefaultProviderConfig(mgr.GetClient())),
-			managed.WithLogger(l.WithValues("controller", name)),
-			managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name)))))
+		Complete(r)
 }
 
 type connector struct {
@@ -151,7 +171,6 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	meta.SetExternalName(cr, strconv.Itoa(at.ID))
 	return managed.ExternalCreation{
-		ExternalNameAssigned: true,
 		ConnectionDetails: managed.ConnectionDetails{
 			"token": []byte(at.Token),
 		},
