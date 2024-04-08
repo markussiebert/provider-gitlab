@@ -143,7 +143,12 @@ func (mg *AccessToken) ResolveReferences(ctx context.Context, c client.Reader) e
 		return errors.Wrap(err, "spec.forProvider.groupId")
 	}
 
-	mg.Spec.ForProvider.GroupID = toPtrValue(rsp.ResolvedValue)
+	resolvedID, err := toPtrValue(rsp.ResolvedValue)
+	if err != nil {
+		return errors.Wrap(err, "spec.forProvider.groupId")
+	}
+
+	mg.Spec.ForProvider.GroupID = resolvedID
 	mg.Spec.ForProvider.GroupIDRef = rsp.ResolvedReference
 
 	return nil
