@@ -5,8 +5,9 @@ import (
 	"strconv"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	"github.com/crossplane/crossplane-runtime/pkg/connection"
+	crpc "github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
@@ -16,13 +17,15 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
-	controller "sigs.k8s.io/controller-runtime"
+	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane-contrib/provider-gitlab/apis/projects/v1alpha1"
+	secretstoreapi "github.com/crossplane-contrib/provider-gitlab/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-gitlab/pkg/clients"
 	"github.com/crossplane-contrib/provider-gitlab/pkg/clients/projects"
+	"github.com/crossplane-contrib/provider-gitlab/pkg/features"
 )
 
 const (
@@ -48,22 +51,35 @@ type connector struct {
 }
 
 // SetupDeployKey adds a controller that reconciles ProjectDeployKey.
-func SetupDeployKey(manager controller.Manager, log logging.Logger) error {
+func SetupDeployKey(mgr ctrl.Manager, o crpc.Options) error {
 	name := managed.ControllerName(v1alpha1.DeployKeyKind)
 
-	connector := &connector{kube: manager.GetClient(), newGitlabClientFn: newDeployKeyClient}
+	cps := []managed.ConnectionPublisher{managed.NewAPISecretPublisher(mgr.GetClient(), mgr.GetScheme())}
+	if o.Features.Enabled(features.EnableAlphaExternalSecretStores) {
+		cps = append(cps, connection.NewDetailsManager(mgr.GetClient(), secretstoreapi.StoreConfigGroupVersionKind))
+	}
 
-	reconciler := managed.NewReconciler(manager,
+	reconcilerOpts := []managed.ReconcilerOption{
+		managed.WithExternalConnecter(&connector{kube: mgr.GetClient(), newGitlabClientFn: newDeployKeyClient}),
+		managed.WithInitializers(),
+		managed.WithPollInterval(o.PollInterval),
+		managed.WithLogger(o.Logger.WithValues("controller", name)),
+		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
+		managed.WithConnectionPublishers(cps...),
+	}
+
+	if o.Features.Enabled(features.EnableAlphaManagementPolicies) {
+		reconcilerOpts = append(reconcilerOpts, managed.WithManagementPolicies())
+	}
+
+	r := managed.NewReconciler(mgr,
 		resource.ManagedKind(v1alpha1.DeployKeyGroupVersionKind),
-		managed.WithExternalConnecter(connector),
-		managed.WithInitializers(managed.NewDefaultProviderConfig(manager.GetClient())),
-		managed.WithLogger(log.WithValues("controller", name)),
-		managed.WithRecorder(event.NewAPIRecorder(manager.GetEventRecorderFor(name))))
+		reconcilerOpts...)
 
-	return controller.NewControllerManagedBy(manager).
+	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
 		For(&v1alpha1.DeployKey{}).
-		Complete(reconciler)
+		Complete(r)
 }
 
 func (c *connector) Connect(ctx context.Context, mgd resource.Managed) (managed.ExternalClient, error) {
@@ -169,7 +185,7 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	id := strconv.Itoa(keyResponse.ID)
 	meta.SetExternalName(cr, id)
 
-	return managed.ExternalCreation{ExternalNameAssigned: true}, nil
+	return managed.ExternalCreation{}, nil
 }
 
 func (e *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {
@@ -255,7 +271,7 @@ func generateUpdateOptions(customResourse *v1alpha1.DeployKey) *gitlab.UpdateDep
 }
 
 func isUpToDate(cr *v1alpha1.DeployKey, dk *gitlab.ProjectDeployKey) bool {
-	isCanPushUpToDate := pointer.BoolEqual(cr.Spec.ForProvider.CanPush, &dk.CanPush)
+	isCanPushUpToDate := ptr.Equal(cr.Spec.ForProvider.CanPush, &dk.CanPush)
 	isTitleUpToDate := cr.Spec.ForProvider.Title == dk.Title
 
 	return isCanPushUpToDate && isTitleUpToDate
