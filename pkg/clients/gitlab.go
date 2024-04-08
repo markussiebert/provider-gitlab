@@ -18,14 +18,18 @@ package clients
 
 import (
 	"context"
+	"crypto/tls"
+	"net/http"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/hashicorp/go-cleanhttp"
 	"github.com/pkg/errors"
 	gitlab "github.com/xanzy/go-gitlab"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
@@ -37,19 +41,31 @@ import (
 
 // Config provides gitlab configurations for the Gitlab client
 type Config struct {
-	Token   string
-	BaseURL string
+	Token              string
+	BaseURL            string
+	InsecureSkipVerify bool
 }
 
 // NewClient creates new Gitlab Client with provided Gitlab Configurations/Credentials.
 func NewClient(c Config) *gitlab.Client {
-	var cl *gitlab.Client
-	var err error
+	options := []gitlab.ClientOptionFunc{}
 	if c.BaseURL != "" {
-		cl, err = gitlab.NewClient(c.Token, gitlab.WithBaseURL(c.BaseURL))
-	} else {
-		cl, err = gitlab.NewClient(c.Token)
+		options = append(options, gitlab.WithBaseURL(c.BaseURL))
 	}
+	if c.InsecureSkipVerify {
+		transport := cleanhttp.DefaultPooledTransport()
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			}
+		}
+		transport.TLSClientConfig.InsecureSkipVerify = true
+		httpclient := &http.Client{
+			Transport: transport,
+		}
+		options = append(options, gitlab.WithHTTPClient(httpclient))
+	}
+	cl, err := gitlab.NewClient(c.Token, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -67,7 +83,7 @@ func GetConfig(ctx context.Context, c client.Client, mg resource.Managed) (*Conf
 	}
 }
 
-// UseProviderConfig to produce a config that can be used to authenticate to AWS.
+// UseProviderConfig to produce a config that can be used to authenticate to Gitlab.
 func UseProviderConfig(ctx context.Context, c client.Client, mg resource.Managed) (*Config, error) {
 	pc := &v1beta1.ProviderConfig{}
 	if err := c.Get(ctx, types.NamespacedName{Name: mg.GetProviderConfigReference().Name}, pc); err != nil {
@@ -89,7 +105,11 @@ func UseProviderConfig(ctx context.Context, c client.Client, mg resource.Managed
 		if err := c.Get(ctx, types.NamespacedName{Namespace: csr.Namespace, Name: csr.Name}, s); err != nil {
 			return nil, errors.Wrap(err, "cannot get credentials secret")
 		}
-		return &Config{BaseURL: pc.Spec.BaseURL, Token: string(s.Data[csr.Key])}, nil
+		return &Config{
+			BaseURL:            pc.Spec.BaseURL,
+			Token:              string(s.Data[csr.Key]),
+			InsecureSkipVerify: ptr.Deref(pc.Spec.InsecureSkipVerify, false),
+		}, nil
 	default:
 		return nil, errors.Errorf("credentials source %s is not currently supported", s)
 	}
